@@ -355,8 +355,10 @@ function ghErr(status, msg){ const e=new Error(msg); e.status=status; return e; 
 async function gh(path, opts={}){
   if (!settings.token || !settings.owner || !settings.repo) throw ghErr(0, "settings");
   let res;
+  const url = API + path + (opts.method ? "" : (path.includes("?") ? "&" : "?") + "_=" + Date.now());   // 読み込みは毎回サーバーから
   try {
-    res = await fetch(API + path, {
+    res = await fetch(url, {
+      cache: "no-store",
       ...opts,
       headers: { "Authorization":"Bearer "+settings.token, "Accept":"application/vnd.github+json", "X-GitHub-Api-Version":"2022-11-28", ...(opts.headers||{}) }
     });
@@ -523,6 +525,7 @@ function reason(e){
   if (e.status===-1) return "インターネットにつながっていないようです。";
   if (e.status===0) return "保存先の設定がまだありません。息子さんに知らせてください。";
   if (e.status===401 || e.status===403) return "保存先の鍵（トークン）が使えません。期限切れかもしれません。息子さんに知らせてください。";
+  if (e.status===409) return "保存先が同時に更新されました。少し待ってから、もう一度押してください。";
   return `エラー ${e.status} が出ました。息子さんに知らせてください。`;
 }
 function failText(e){
@@ -552,7 +555,7 @@ function askUndo(btn, entry, after){
       $("#banner").hidden=true;
       renderRecent(); renderPending();
       if (after) after();
-    } catch(e){ wrap.textContent=""; wrap.appendChild(btn); banner("bad", "取り消せませんでした。"+failText(e)); }
+    } catch(e){ wrap.textContent=""; wrap.appendChild(btn); banner("bad", "取り消せませんでした。"+reason(e)); }
   };
 }
 function entryRow(e, withDelete){
