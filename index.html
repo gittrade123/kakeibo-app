@@ -296,7 +296,7 @@ const CATEGORIES = [
   "銀行　引落し","臨時収入　株式等","相続費用　葬儀","公共料金"
 ];
 const MEMO_CHIPS = ["TOP","イトーヨーカ堂","コープ","マツキヨ"];   // 4個までなら1行に収まる。増やすと画面が縦に伸びる
-const DATA_DIR = "data";           // リポジトリ内のフォルダ
+const DATA_DIR = "";               // CSVを置くフォルダ。リポジトリ直下なら "" 、data フォルダなら "data"
 const RECENT_MAX = 8;
 /* ============================================================ */
 
@@ -365,7 +365,8 @@ async function gh(path, opts={}){
   if (!res.ok) throw ghErr(res.status, "github");
   return res.json();
 }
-const filePath = year => `/repos/${settings.owner}/${settings.repo}/contents/${DATA_DIR}/${year}.csv`;
+const DIR = DATA_DIR ? DATA_DIR.replace(/^\/+|\/+$/g,"") + "/" : "";
+const filePath = year => `/repos/${settings.owner}/${settings.repo}/contents/${DIR}${year}.csv`;
 async function getFile(year){
   const j = await gh(filePath(year) + "?ref=" + encodeURIComponent(settings.branch||"main"));
   if (!j) return null;
