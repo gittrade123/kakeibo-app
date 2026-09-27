@@ -284,6 +284,12 @@ tr.mrow.cur td{background:var(--green-soft)}
   <button class="btn" id="saveSettings">保存して接続を確認</button>
   <button class="btn plain" id="flushNow">未送信のものを今すぐ送る</button>
   <p class="status" id="setStatus" hidden></p>
+  <div id="linkBox" hidden>
+    <label for="cfgLink">ショートカット用リンク（設定入り）</label>
+    <input id="cfgLink" readonly>
+    <button class="btn plain" id="copyLink">リンクをコピー</button>
+    <p class="note">このリンクで開くと設定が自動で入ります。デスクトップのショートカットをこのリンクで作っておけば、ブラウザの履歴やデータを消しても再入力は不要です。リンクにはトークンが含まれるので、他人に渡さないでください。</p>
+  </div>
   <p class="note" style="margin-top:2rem">費目の並びや「よく使うメモ」を変えたいときは、この index.html の先頭にある CATEGORIES と MEMO_CHIPS を書き換えます。</p>
 </section>
 
@@ -323,6 +329,19 @@ const load = (k, fb) => { try { return JSON.parse(localStorage.getItem(k)) ?? fb
 const store = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} };
 
 let settings = load(LS.settings, {owner:"", repo:"", branch:"main", token:""});
+// ショートカットのリンク（#s=…）に設定が入っていれば取り込む
+const b64u = { enc: str => btoa(unescape(encodeURIComponent(str))).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/,""),
+               dec: str => decodeURIComponent(escape(atob(str.replace(/-/g,"+").replace(/_/g,"/") + "===".slice((str.length+3)%4)))) };
+try {
+  const m = location.hash.match(/#s=([A-Za-z0-9_-]+)/);
+  if (m){
+    const c = JSON.parse(b64u.dec(m[1]));
+    if (c && c.owner && c.repo && c.token){ settings = { owner:c.owner, repo:c.repo, branch:c.branch||"main", token:c.token }; store(LS.settings, settings); }
+    history.replaceState(null, "", location.pathname + location.search);   // アドレス欄からトークンを消す（ショートカットには残る）
+  }
+} catch {}
+function configLink(){ return location.origin + location.pathname + "#s=" + b64u.enc(JSON.stringify(settings)); }
+window.addEventListener("hashchange", () => { if (/#s=/.test(location.hash)) location.reload(); });   // 開いたままリンクを踏んだ場合も取り込む
 let pending  = load(LS.pending, []);
 let recent   = load(LS.recent, []);
 
@@ -660,7 +679,19 @@ async function renderSummary(){
 function fillSettings(){
   $("#owner").value=settings.owner||""; $("#repo").value=settings.repo||""; $("#branch").value=settings.branch||"main"; $("#token").value=settings.token||"";
   $("#setStatus").hidden=true;
+  showLink();
 }
+function showLink(){
+  const ok = settings.owner && settings.repo && settings.token;
+  $("#linkBox").hidden = !ok;
+  if (ok) $("#cfgLink").value = configLink();
+}
+$("#copyLink").onclick = async () => {
+  const el=$("#cfgLink"); el.select();
+  try { await navigator.clipboard.writeText(el.value); $("#copyLink").textContent="コピーしました"; }
+  catch { document.execCommand("copy"); $("#copyLink").textContent="コピーしました"; }
+  setTimeout(() => { $("#copyLink").textContent="リンクをコピー"; }, 2000);
+};
 $("#saveSettings").onclick = async () => {
   settings = { owner:$("#owner").value.trim(), repo:$("#repo").value.trim(), branch:$("#branch").value.trim()||"main", token:$("#token").value.trim() };
   store(LS.settings, settings);
@@ -673,6 +704,7 @@ $("#saveSettings").onclick = async () => {
     const f = await getFile(y);
     st.className="status ok";
     st.textContent = `接続できました（${settings.owner}/${settings.repo}）。${y}年のファイルは${f ? "あります" : "まだ無いので、最初の保存時に作られます"}。`;
+    showLink();
   } catch(e){
     st.className="status bad";
     st.textContent = e.status===401 ? "トークンが正しくないか、期限切れです。" : e.status===404 ? "リポジトリが見つかりません。ユーザー名・リポジトリ名・トークンの権限を確認してください。" : e.status===-1 ? "インターネットにつながっていません。" : `確認できませんでした（エラー ${e.status}）。`;
@@ -682,7 +714,8 @@ $("#flushNow").onclick = async () => { await flushPending(); show("input"); };
 
 /* ---------- 起動 ---------- */
 renderPending(); renderRecent();
-if (!settings.token) show("set");
+show("input");
+if (!settings.token) banner("bad", "保存先の設定がまだありません。右上の「設定」から設定してください（息子さんの作業です）。");
 else if (pending.length) flushPending();
 </script>
 </body>
