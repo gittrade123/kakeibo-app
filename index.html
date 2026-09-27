@@ -390,22 +390,30 @@ async function loadYear(year, force=false){
 async function appendEntries(year, entries){
   for (let attempt=1; attempt<=3; attempt++){
     const f = await getFile(year);
-    let text = f ? f.text : "\uFEFF" + HEADER + "\n";
+    let text = f ? f.text.replace(/^\uFEFF/,"") : HEADER + "\n";
     if (!text.endsWith("\n")) text += "\n";
-    text += entries.map(toLine).join("\n") + "\n";
+    text = "\uFEFF" + text + entries.map(toLine).join("\n") + "\n";
     const msg = entries.length===1 ? `家計簿 ${entries[0].date} ${entries[0].cat} ${entries[0].amount}` : `家計簿 ${entries.length}件を追加`;
     try { await putFile(year, text, f?f.sha:null, msg); delete yearCache[year]; return; }
     catch(e){ if (e.status===409 && attempt<3) continue; throw e; }
   }
 }
-async function deleteEntry(year, id){
+function firstField(line){ const m = line.replace(/^\uFEFF/,"").match(/^"((?:[^"]|"")*)"|^([^,]*)/); return m ? (m[1]!==undefined ? m[1].replace(/""/g,'"') : m[2]) : ""; }
+async function deleteEntry(year, entry){
+  const id = typeof entry==="string" ? entry : entry.id;
   for (let attempt=1; attempt<=3; attempt++){
     const f = await getFile(year);
-    if (!f) return;
-    const lines = f.text.replace(/^\uFEFF/,"").split("\n");
-    const kept = lines.filter(l => !(l.startsWith(id + ",")));
-    const text = "\uFEFF" + kept.join("\n");
-    try { await putFile(year, text, f.sha, `家計簿 取り消し ${id}`); delete yearCache[year]; return; }
+    if (!f) throw ghErr(404, "github");
+    const lines = f.text.replace(/^\uFEFF/,"").split(/\r?\n/);
+    let idx = id ? lines.findIndex(l => firstField(l)===id) : -1;
+    if (idx<0 && typeof entry==="object"){                  // 予備：内容の一致で探す
+      const want = toLine({...entry, id:""}).slice(1);        // ",日付,費目,金額,メモ,登録日時"
+      idx = lines.findIndex(l => l.replace(/\r$/,"").endsWith(want) || l.split(",").slice(1,4).join(",")===[entry.date, csvField(entry.cat), entry.amount].join(","));
+    }
+    if (idx<0) throw ghErr(410, "notfound");
+    lines.splice(idx, 1);
+    const text = "\uFEFF" + lines.join("\n");
+    try { await putFile(year, text, f.sha, `家計簿 取り消し ${id||entry.date}`); delete yearCache[year]; return; }
     catch(e){ if (e.status===409 && attempt<3) continue; throw e; }
   }
 }
@@ -526,6 +534,7 @@ function reason(e){
   if (e.status===0) return "保存先の設定がまだありません。息子さんに知らせてください。";
   if (e.status===401 || e.status===403) return "保存先の鍵（トークン）が使えません。期限切れかもしれません。息子さんに知らせてください。";
   if (e.status===409) return "保存先が同時に更新されました。少し待ってから、もう一度押してください。";
+  if (e.status===410) return "その行が保存先に見つかりませんでした。「集計を見る」を開き直して、もう一度お試しください。";
   return `エラー ${e.status} が出ました。息子さんに知らせてください。`;
 }
 function failText(e){
@@ -549,7 +558,7 @@ function askUndo(btn, entry, after){
     try {
       const pi = pending.findIndex(p => p.id===entry.id);
       if (pi>=0){ pending.splice(pi,1); store(LS.pending, pending); }
-      else await deleteEntry(entry.date.slice(0,4), entry.id);
+      else await deleteEntry(entry.date.slice(0,4), entry);
       recent = recent.filter(r => r.id!==entry.id); store(LS.recent, recent);
       wrap.textContent="取り消しました";
       $("#banner").hidden=true;
