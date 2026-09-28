@@ -132,6 +132,12 @@ section[hidden]{display:none}
 }
 .save:active{transform:translateY(3px);box-shadow:0 1px 0 var(--green-deep)}
 .save[disabled]{opacity:.55;box-shadow:none;transform:none;cursor:default}
+.editbar{
+  display:flex;align-items:center;gap:1rem;flex-wrap:wrap;margin:0 0 1rem;padding:.7rem 1.1rem;
+  border-radius:var(--radius);background:var(--yellow);border:2px solid var(--yellow-deep);font-weight:700;font-size:1.05rem;
+}
+.editbar[hidden]{display:none}
+.editbar .txt{flex:1;min-width:0}
 .problem{
   margin:.7rem 0 0;padding:.7rem 1rem;border-radius:var(--radius);
   background:var(--red-soft);color:var(--red);font-weight:700;
@@ -155,7 +161,8 @@ th,td{padding:.6rem .8rem;border-bottom:1px solid var(--line);text-align:left;ve
 th{background:var(--green-soft);font-weight:700}
 tr:last-child td{border-bottom:0}
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-td.act{width:12rem;text-align:right;white-space:nowrap}
+td.act{width:17rem;text-align:right;white-space:nowrap}
+.undo.fix{background:var(--green-soft);border-color:#C6DCCC;margin-right:.4rem}
 .undo{min-height:46px;padding:0 1rem;border-radius:999px;border:2px solid var(--line);background:#fff;font-size:.95rem}
 .undo.yes{background:var(--red);color:#fff;border-color:var(--red)}
 .undo.no{background:var(--green-soft)}
@@ -215,6 +222,8 @@ tr.mrow.cur td{background:var(--green-soft)}
 
 <!-- ================= 入力 ================= -->
 <section id="view-input" role="tabpanel" aria-labelledby="tab-input">
+
+  <div class="editbar" id="editBar" hidden><span class="txt" id="editTxt"></span><button class="undo no" id="editCancel">直すのをやめる</button></div>
 
   <div class="grid2">
     <div>
@@ -443,6 +452,21 @@ async function deleteEntry(year, entry){
   }
 }
 
+async function updateEntry(orig, e){
+  const y0 = orig.date.slice(0,4), y1 = e.date.slice(0,4);
+  if (y0!==y1){ await deleteEntry(y0, orig); await appendEntries(y1, [e]); return; }
+  for (let attempt=1; attempt<=3; attempt++){
+    const f = await getFile(y0);
+    if (!f) throw ghErr(404, "github");
+    const lines = f.text.replace(/^\uFEFF/,"").split(/\r?\n/);
+    const idx = lines.findIndex(l => firstField(l)===e.id);
+    if (idx<0) throw ghErr(410, "notfound");
+    lines[idx] = toLine(e);
+    try { await putFile(y0, "\uFEFF" + lines.join("\n"), f.sha, `家計簿 修正 ${e.date} ${e.cat} ${e.amount}`); delete yearCache[y0]; return; }
+    catch(err){ if (err.status===409 && attempt<3) continue; throw err; }
+  }
+}
+
 /* ---------- 画面切替 ---------- */
 const views = { input:$("#view-input"), sum:$("#view-sum"), set:$("#view-set") };
 function show(name){
@@ -509,6 +533,27 @@ MEMO_CHIPS.forEach(m => {
   chipsEl.appendChild(b);
 });
 
+/* ---------- 入力：修正 ---------- */
+let editing = null;
+function describe(e){ return `${jpDate(e.date)} ${e.cat} ${yen(e.amount)}${e.memo?"（"+e.memo+"）":""}`; }
+function startEdit(e){
+  editing = e;
+  setDate(e.date);
+  selCat = e.cat; $$(".cat").forEach(x => x.setAttribute("aria-pressed", String(x.textContent===selCat)));
+  setAmount(String(Math.abs(e.amount))); memoEl.value = e.memo || "";
+  $("#editTxt").textContent = "この1件を直しています： " + describe(e);
+  $("#editBar").hidden = false; $("#saveBtn").textContent = "直して保存";
+  $("#banner").hidden = true; hideProblem();
+  show("input"); amountEl.focus();
+}
+function resetForm(){
+  editing = null;
+  selCat=""; $$(".cat").forEach(x => x.setAttribute("aria-pressed","false"));
+  setAmount(""); memoEl.value=""; setDate(ymd(new Date()));
+  $("#editBar").hidden = true; $("#saveBtn").textContent = "保 存";
+}
+$("#editCancel").onclick = () => { resetForm(); banner("wait", "直すのをやめました。元のままです。"); };
+
 /* ---------- 入力：保存 ---------- */
 function showProblem(t){ const p=$("#problem"); p.textContent=t; p.hidden=false; }
 function hideProblem(){ $("#problem").hidden=true; }
@@ -524,12 +569,24 @@ $("#saveBtn").onclick = async () => {
   if (!selCat){ showProblem("費目を選んでください（左のボタンからひとつ）。"); return; }
   if (!digits || Number(digits)===0){ showProblem("金額を入れてください。"); amountEl.focus(); return; }
   hideProblem();
+  if (editing){
+    const orig = editing;
+    const e = { ...orig, date:selDate, cat:selCat, amount:Number(digits), memo:memoEl.value.trim() };
+    resetForm();
+    const pi = pending.findIndex(p => p.id===orig.id);
+    if (pi>=0){ pending[pi] = e; store(LS.pending, pending); renderRecent(); banner("ok", "直しました： " + describe(e)); return; }
+    const btn=$("#saveBtn"); btn.disabled=true; banner("wait", "直しています… " + describe(e));
+    try {
+      await updateEntry(orig, e);
+      recent = recent.map(r => r.id===e.id ? e : r); store(LS.recent, recent);
+      banner("ok", "直しました： " + describe(e));
+    } catch(err){ banner("bad", "直せませんでした。" + reason(err) + " 元のままです。"); }
+    finally { btn.disabled=false; renderRecent(); }
+    return;
+  }
   const e = { id:newId(), date:selDate, cat:selCat, amount:Number(digits), memo:memoEl.value.trim(), created:nowStamp() };
   pending.push(e); store(LS.pending, pending);
-  // 画面をすぐ次の入力に備える
-  selCat=""; $$(".cat").forEach(x => x.setAttribute("aria-pressed","false"));
-  setAmount(""); memoEl.value="";
-  setDate(ymd(new Date()));
+  resetForm();   // 画面をすぐ次の入力に備える
   banner("wait", `保存しています… ${jpDate(e.date)} ${e.cat} ${yen(e.amount)}`);
   await flushPending();
 };
@@ -595,7 +652,10 @@ function askUndo(btn, entry, after){
 function entryRow(e, withDelete){
   const tr=document.createElement("tr");
   tr.innerHTML = `<td>${jpDate(e.date)}</td><td>${esc(e.cat)}</td><td class="num">${yen(e.amount)}</td><td>${esc(e.memo)}</td>` + (withDelete ? `<td class="act"></td>` : "");
-  if (withDelete){ const b=document.createElement("button"); b.className="undo"; b.textContent="取り消す"; b.onclick=()=>askUndo(b, e, withDelete===true?null:withDelete); tr.lastElementChild.appendChild(b); }
+  if (withDelete){
+    const fx=document.createElement("button"); fx.className="undo fix"; fx.textContent="直す"; fx.onclick=()=>startEdit(e); tr.lastElementChild.appendChild(fx);
+    const b=document.createElement("button"); b.className="undo"; b.textContent="取り消す"; b.onclick=()=>askUndo(b, e, withDelete===true?null:withDelete); tr.lastElementChild.appendChild(b);
+  }
   return tr;
 }
 const esc = s => String(s??"").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
