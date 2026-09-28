@@ -182,6 +182,18 @@ td.act{width:17rem;text-align:right;white-space:nowrap}
 .sumgrid{display:grid;grid-template-columns:1fr 1fr;gap:1.6rem;margin-bottom:1.6rem}
 @media (max-width:900px){.sumgrid{grid-template-columns:1fr}}
 .bar{display:block;height:.55rem;background:var(--green);border-radius:4px;margin-top:.3rem;min-width:2px}
+tr.xrow{cursor:pointer}
+tr.xrow:hover td{background:var(--yellow)}
+tr.xrow.open td{background:var(--green-soft)}
+.tri{display:inline-block;width:1.3rem;color:var(--green-deep);font-size:.8rem}
+tr.sub>td{padding:.2rem .4rem .6rem 1.6rem;background:#F6F9F4}
+tr.sub table{border:1px solid var(--line);font-size:.95rem}
+tr.sub th,tr.sub td{padding:.4rem .5rem}
+tr.sub td:first-child,tr.sub td.num{white-space:nowrap}
+tr.sub td.act{width:auto;white-space:nowrap}
+tr.sub .undo{min-height:40px;padding:0 .6rem;font-size:.85rem}
+tr.sub .undo.fix{margin-right:.25rem}
+.sum h2 .hint{font-weight:400;color:var(--muted);font-size:.85rem;margin-left:.4rem}
 tr.mrow{cursor:pointer}
 tr.mrow:hover td{background:var(--yellow)}
 tr.mrow.cur td{background:var(--green-soft)}
@@ -309,7 +321,7 @@ tr.mrow.cur td{background:var(--green-soft)}
 /* ============================================================
    ▼ ここだけ触れば大体のことは変えられます
    ============================================================ */
-const APP_VERSION = "8";           // index.html を差し替えるたびに 1 増やす（古いキャッシュを自動で捨てるための目印）
+const APP_VERSION = "9";           // index.html を差し替えるたびに 1 増やす（古いキャッシュを自動で捨てるための目印）
 const CATEGORIES = [
   "食費","住居備品費","日用雑貨費","不動産経費",
   "交際費","由美子へ","医療費（！）","車費",
@@ -650,9 +662,9 @@ function askUndo(btn, entry, after){
     } catch(e){ wrap.textContent=""; wrap.appendChild(btn); banner("bad", "取り消せませんでした。"+reason(e)); }
   };
 }
-function entryRow(e, withDelete){
+function entryRow(e, withDelete, opts={}){
   const tr=document.createElement("tr");
-  tr.innerHTML = `<td>${jpDate(e.date)}</td><td>${esc(e.cat)}</td><td class="num">${yen(e.amount)}</td><td>${esc(e.memo)}</td>` + (withDelete ? `<td class="act"></td>` : "");
+  tr.innerHTML = `<td>${jpDate(e.date)}</td>${opts.noCat ? "" : `<td>${esc(e.cat)}</td>`}<td class="num">${yen(e.amount)}</td><td>${esc(e.memo)}</td>` + (withDelete ? `<td class="act"></td>` : "");
   if (withDelete){
     const fx=document.createElement("button"); fx.className="undo fix"; fx.textContent="直す"; fx.onclick=()=>startEdit(e); tr.lastElementChild.appendChild(fx);
     const b=document.createElement("button"); b.className="undo"; b.textContent="取り消す"; b.onclick=()=>askUndo(b, e, withDelete===true?null:withDelete); tr.lastElementChild.appendChild(b);
@@ -673,7 +685,8 @@ function renderRecent(){
 
 /* ---------- 集計 ---------- */
 let sumY, sumM;   // 表示中の年月
-function setMonth(y,m){ if (m<1){y--;m=12;} if (m>12){y++;m=1;} sumY=y; sumM=m; }
+const openKeys = new Set();   // 開いている費目／日の行
+function setMonth(y,m){ if (m<1){y--;m=12;} if (m>12){y++;m=1;} if (y!==sumY || m!==sumM) openKeys.clear(); sumY=y; sumM=m; }
 { const d=new Date(); setMonth(d.getFullYear(), d.getMonth()+1); }
 $("#prevMonth").onclick = () => { setMonth(sumY, sumM-1); renderSummary(); };
 $("#nextMonth").onclick = () => { setMonth(sumY, sumM+1); renderSummary(); };
@@ -703,13 +716,35 @@ async function renderSummary(){
       const days = Object.entries(byDay).sort((a,b)=>a[0].localeCompare(b[0]));
       const grid=document.createElement("div"); grid.className="sumgrid";
       grid.innerHTML = `
-        <div><h2>費目ごと</h2><table><thead><tr><th>費目</th><th class="num">件数</th><th class="num">金額</th></tr></thead><tbody>
-        ${cats.map(([c,v]) => `<tr><td>${esc(c)}<span class="bar" style="width:${Math.max(2, v.s/maxCat*100)}%"></span></td><td class="num">${v.n}</td><td class="num">${yen(v.s)}</td></tr>`).join("")}
+        <div><h2>費目ごと <span class="hint">押すと明細が開きます</span></h2><table><thead><tr><th>費目</th><th class="num">件数</th><th class="num">金額</th></tr></thead><tbody>
+        ${cats.map(([c,v]) => `<tr class="xrow" data-key="cat:${esc(c)}"><td><span class="tri">▶</span>${esc(c)}<span class="bar" style="width:${Math.max(2, v.s/maxCat*100)}%"></span></td><td class="num">${v.n}</td><td class="num">${yen(v.s)}</td></tr>`).join("")}
         </tbody></table></div>
-        <div><h2>日ごと</h2><table><thead><tr><th>日付</th><th class="num">件数</th><th class="num">金額</th></tr></thead><tbody>
-        ${days.map(([d,v]) => `<tr><td>${jpDate(d)}</td><td class="num">${v.n}</td><td class="num">${yen(v.s)}</td></tr>`).join("")}
+        <div><h2>日ごと <span class="hint">押すと明細が開きます</span></h2><table><thead><tr><th>日付</th><th class="num">件数</th><th class="num">金額</th></tr></thead><tbody>
+        ${days.map(([d,v]) => `<tr class="xrow" data-key="day:${d}"><td><span class="tri">▶</span>${jpDate(d)}</td><td class="num">${v.n}</td><td class="num">${yen(v.s)}</td></tr>`).join("")}
         </tbody></table></div>`;
       body.appendChild(grid);
+      // 行を押すと、その費目／その日の明細を折りたたみで表示
+      const expand = tr => {
+        const key = tr.dataset.key, [kind, val] = [key.slice(0,3), key.slice(4)];
+        const es = month.filter(e => kind==="cat" ? e.cat===val : e.date===val);
+        const sub = document.createElement("tr"); sub.className = "sub";
+        const td = document.createElement("td"); td.colSpan = 3;
+        const t = document.createElement("table");
+        t.innerHTML = kind==="cat"
+          ? `<thead><tr><th>日付</th><th class="num">金額</th><th>メモ</th><th></th></tr></thead>`
+          : `<thead><tr><th>日付</th><th>費目</th><th class="num">金額</th><th>メモ</th><th></th></tr></thead>`;
+        const tb = document.createElement("tbody");
+        es.forEach(e => tb.appendChild(entryRow(e, () => renderSummary(), {noCat: kind==="cat"})));
+        t.appendChild(tb); td.appendChild(t); sub.appendChild(td);
+        tr.after(sub); tr.classList.add("open"); tr.querySelector(".tri").textContent = "▼";
+      };
+      const collapse = tr => { const n = tr.nextElementSibling; if (n && n.classList.contains("sub")) n.remove(); tr.classList.remove("open"); tr.querySelector(".tri").textContent = "▶"; };
+      grid.addEventListener("click", ev => {
+        const tr = ev.target.closest("tr.xrow"); if (!tr) return;
+        if (tr.classList.contains("open")){ collapse(tr); openKeys.delete(tr.dataset.key); }
+        else { expand(tr); openKeys.add(tr.dataset.key); }
+      });
+      $$("tr.xrow", grid).forEach(tr => { if (openKeys.has(tr.dataset.key)) expand(tr); });
       // 明細
       const det=document.createElement("details");
       det.innerHTML = `<summary>この月の明細をぜんぶ見る（${month.length}件）</summary>`;
