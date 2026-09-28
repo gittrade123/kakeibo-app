@@ -309,6 +309,7 @@ tr.mrow.cur td{background:var(--green-soft)}
 /* ============================================================
    ▼ ここだけ触れば大体のことは変えられます
    ============================================================ */
+const APP_VERSION = "8";           // index.html を差し替えるたびに 1 増やす（古いキャッシュを自動で捨てるための目印）
 const CATEGORIES = [
   "食費","住居備品費","日用雑貨費","不動産経費",
   "交際費","由美子へ","医療費（！）","車費",
@@ -772,6 +773,18 @@ $("#saveSettings").onclick = async () => {
   }
 };
 $("#flushNow").onclick = async () => { await flushPending(); show("input"); };
+
+/* ---------- 新しい版があれば読み直す（ブラウザやCDNの古いキャッシュ対策） ---------- */
+(async () => {
+  try {
+    const r = await fetch(location.pathname, { cache:"no-store" });
+    const m = (await r.text()).match(/const APP_VERSION = "([^"]+)"/);
+    const latest = m && m[1];
+    if (latest && latest!==APP_VERSION && new URLSearchParams(location.search).get("v")!==latest){
+      location.replace(location.pathname + "?v=" + latest + location.hash);
+    }
+  } catch {}
+})();
 
 /* ---------- 起動 ---------- */
 renderPending(); renderRecent();
